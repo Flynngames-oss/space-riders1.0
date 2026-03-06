@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>3D Lunar Racer - Garage Edition</title>
+    <style>
+        body { margin: 0; overflow: hidden; background: #000; font-family: 'Courier New', Courier, monospace; }
+        #ui { position: absolute; top: 20px; left: 20px; color: #00d4ff; font-size: 28px; z-index: 10; pointer-events: none; text-shadow: 0 0 10px #00d4ff; }
+        #multiplier { color: #ff00ff; font-weight: bold; margin-left: 10px; display: none; text-shadow: 0 0 10px #ff00ff; }
+        
+        #open-garage-btn { 
+            position: absolute; top: 70px; left: 20px; background: rgba(0,212,255,0.2); border: 1px solid #00d4ff;
+            color: #00d4ff; cursor: pointer; padding: 8px 15px; z-index: 10; font-family: inherit; font-weight: bold;
+            pointer-events: auto; transition: 0.3s;
+        }
+        #open-garage-btn:hover { background: #00d4ff; color: #000; }
+
+        #nitro-ui { position: absolute; bottom: 20px; right: 20px; width: 200px; text-align: right; color: #ff00ff; font-size: 20px; font-weight: bold; text-shadow: 0 0 10px #ff00ff; }
+        #nitro-bar-container { width: 200px; height: 15px; background: rgba(255, 0, 255, 0.2); border: 1px solid #ff00ff; margin-top: 5px; border-radius: 3px; }
+        #nitro-bar-fill { width: 100%; height: 100%; background: #ff00ff; box-shadow: 0 0 15px #ff00ff; transition: width 0.1s; }
+
+        /* Garage Overlay */
+        #garage-overlay { 
+            display: none; position: absolute; top: 0; left: 0; width: 100%; height: 100%; 
+            background: rgba(0, 5, 10, 0.98); z-index: 30; color: white; text-align: center; overflow-y: auto;
+        }
+        .shop-container { display: flex; justify-content: center; gap: 20px; padding: 40px; flex-wrap: wrap; }
+        .car-card { 
+            border: 2px solid #00d4ff; padding: 20px; border-radius: 10px; width: 200px;
+            background: rgba(0, 212, 255, 0.05); transition: 0.3s;
+        }
+        .car-card.owned { border-color: #00ff88; background: rgba(0, 255, 136, 0.05); }
+        .car-card.selected { box-shadow: 0 0 25px #ff00ff; border-color: #ff00ff; transform: scale(1.05); }
+        .buy-btn { 
+            background: #ff00ff; border: none; padding: 12px; cursor: pointer; 
+            font-family: inherit; font-weight: bold; width: 100%; margin-top: 15px; color: white;
+        }
+        .buy-btn:disabled { background: #444; cursor: not-allowed; }
+
+        #near-miss-pop { position: absolute; top: 40%; left: 50%; transform: translate(-50%, -50%); color: #00ff00; font-size: 40px; font-weight: bold; display: none; text-shadow: 0 0 20px #00ff00; z-index: 15; }
+        #speed-container { position: absolute; bottom: 20px; left: 20px; width: 150px; height: 150px; background: rgba(0, 20, 40, 0.8); border: 2px solid #00d4ff; border-radius: 50%; z-index: 10; box-shadow: 0 0 15px #00d4ff; }
+        #needle { position: absolute; bottom: 50%; left: 50%; width: 4px; height: 60px; background: #ff00ff; transform-origin: bottom center; transform: translateX(-50%) rotate(-120deg); transition: transform 0.1s ease-out; }
+        #speed-text { position: absolute; width: 100%; text-align: center; bottom: 30px; color: #00d4ff; font-size: 18px; font-weight: bold; }
+        
+        #game-over-screen { display: none; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); color: white; text-align: center; background: rgba(0,10,20,0.95); padding: 40px; border: 3px solid #00d4ff; z-index: 20; border-radius: 15px; box-shadow: 0 0 30px #00d4ff; }
+        #restart-btn { background: #00d4ff; color: #000; border: none; padding: 15px 30px; font-size: 20px; font-family: inherit; font-weight: bold; cursor: pointer; margin-top: 20px; border-radius: 5px; }
+    </style>
+</head>
+<body>
+    <div id="ui">
+        Credits: <span id="score">0</span> <span id="multiplier">X2 BOOST</span>
+        <button id="open-garage-btn">NEON GARAGE</button>
+    </div>
+
+    <div id="garage-overlay">
+        <h1 style="color: #00d4ff; margin-top: 50px; text-shadow: 0 0 20px #00d4ff;">LUNAR GARAGE</h1>
+        <p style="font-size: 20px;">Available Credits: <span id="garage-credits" style="color:#00ff88;">0</span></p>
+        <div class="shop-container" id="shop-items"></div>
+        <button id="close-garage-btn" style="margin-top: 20px; padding: 15px 50px; cursor:pointer; background:#00d4ff; border:none; font-weight:bold;">EXIT TO TRACK</button>
+    </div>
+
+    <div id="near-miss-pop">SLINGSHOT! +100</div>
+    <div id="speed-container"><div id="needle"></div><div id="speed-text"><span id="speed-val">0</span> u/s</div></div>
+    <div id="nitro-ui">NITRO POWER<div id="nitro-bar-container"><div id="nitro-bar-fill"></div></div></div>
+
+    <div id="game-over-screen">
+        <h1 style="color:#ff00ff;">SYSTEM FAILURE</h1>
+        <p>Credits Gained: <span id="final-score">0</span></p>
+        <button id="restart-btn">REBOOT SYSTEM</button>
+    </div>
+    
+    <script type="importmap"> { "imports": { "three": "https://unpkg.com/three@0.160.0/build/three.module.js" } } </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+
+        // --- GAME STATE & SHOP DATA ---
+        let credits = parseInt(localStorage.getItem('lunar_credits')) || 0;
+        let ownedCars = JSON.parse(localStorage.getItem('lunar_owned')) || [0];
+        let activeCarIndex = parseInt(localStorage.getItem('lunar_active')) || 0;
+
+        const carCatalog = [
+            { name: "Scout", color: 0xcccccc, price: 0, speedMult: 1.0 },
+            { name: "Interceptor", color: 0x00ff88, price: 1000, speedMult: 1.2 },
+            { name: "Void Runner", color: 0xaa00ff, price: 5000, speedMult: 1.5 },
+            { name: "Solar Flare", color: 0xffaa00, price: 15000, speedMult: 2.0 }
+        ];
+
+        // --- THREE.JS SETUP ---
+        const scene = new THREE.Scene();
+        scene.fog = new THREE.Fog(0x00050a, 20, 150);
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        document.body.appendChild(renderer.domElement);
+
+        const sunLight = new THREE.DirectionalLight(0xffffff, 2);
+        sunLight.position.set(10, 20, 10);
+        scene.add(sunLight);
+        scene.add(new THREE.AmbientLight(0x222244));
+
+        // --- Stars & Planets ---
+        const starGeo = new THREE.SphereGeometry(200, 32, 32);
+        const starMat = new THREE.MeshBasicMaterial({ color: 0xffffff, side: THREE.BackSide, transparent: true, map: createStarTexture() });
+        scene.add(new THREE.Mesh(starGeo, starMat));
+
+        function createStarTexture() {
+            const canvas = document.createElement('canvas'); canvas.width = 512; canvas.height = 512;
+            const c = canvas.getContext('2d'); c.fillStyle = '#000'; c.fillRect(0,0,512,512);
+            for(let i=0; i<800; i++) {
+                c.fillStyle = `rgba(255,255,255,${Math.random()})`;
+                c.beginPath(); c.arc(Math.random()*512, Math.random()*512, Math.random()*1.2, 0, Math.PI*2); c.fill();
+            }
+            return new THREE.CanvasTexture(canvas);
+        }
+
+        function createPlanet(radius, color, x, y, z, hasRings = false) {
+            const group = new THREE.Group();
+            const planet = new THREE.Mesh(new THREE.SphereGeometry(radius, 32, 32), new THREE.MeshPhongMaterial({ color, emissive: color, emissiveIntensity: 0.1 }));
+            group.add(planet);
+            if (hasRings) {
+                const ring = new THREE.Mesh(new THREE.RingGeometry(radius * 1.5, radius * 2.2, 64), new THREE.MeshBasicMaterial({ color, side: THREE.DoubleSide, transparent: true, opacity: 0.3 }));
+                ring.rotation.x = Math.PI / 2.2; group.add(ring);
+            }
+            group.position.set(x, y, z); scene.add(group); return group;
+        }
+        const planet1 = createPlanet(12, 0xffaa44, -50, 25, -120);
+        const planet2 = createPlanet(8, 0x44eeff, 60, 15, -100, true);
+
+        // --- Road ---
+        const roadCanvas = document.createElement('canvas'); roadCanvas.width = 512; roadCanvas.height = 512;
+        const rCtx = roadCanvas.getContext('2d'); rCtx.fillStyle = '#1a1a1d'; rCtx.fillRect(0, 0, 512, 512);
+        rCtx.shadowBlur = 15; rCtx.shadowColor = "#00d4ff"; rCtx.fillStyle = '#00d4ff'; 
+        rCtx.fillRect(0, 0, 10, 512); rCtx.fillRect(502, 0, 10, 512); rCtx.fillRect(251, 0, 10, 512);
+        const roadTexture = new THREE.CanvasTexture(roadCanvas); roadTexture.wrapS = roadTexture.wrapT = THREE.RepeatWrapping; roadTexture.repeat.set(1, 10);
+        const road = new THREE.Mesh(new THREE.PlaneGeometry(15, 300), new THREE.MeshPhongMaterial({ map: roadTexture }));
+        road.rotation.x = -Math.PI / 2; scene.add(road);
+
+        // --- Car Function ---
+        function createCar(mainColor, isPlayer = false) {
+            const group = new THREE.Group();
+            const body = new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.4, 2.2), new THREE.MeshPhongMaterial({ color: mainColor }));
+            body.position.y = 0.4; group.add(body);
+            const cabin = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.4, 0.8), new THREE.MeshPhongMaterial({ color: 0x00aaff, transparent: true, opacity: 0.7 }));
+            cabin.position.set(0, 0.8, -0.1); group.add(cabin);
+            let thrusters = [];
+            if(isPlayer) {
+                const tGeo = new THREE.CylinderGeometry(0.15, 0.05, 0.4, 8);
+                const tMat = new THREE.MeshBasicMaterial({ color: 0x00d4ff, transparent: true, opacity: 0 });
+                const t1 = new THREE.Mesh(tGeo, tMat); t1.position.set(-0.3, 0.4, 1.2); t1.rotation.x = Math.PI/2;
+                const t2 = t1.clone(); t2.position.set(0.3, 0.4, 1.2);
+                group.add(t1, t2); thrusters = [t1, t2];
+            }
+            const wheelGeo = new THREE.CylinderGeometry(0.3, 0.3, 0.25, 16);
+            const wheelMat = new THREE.MeshPhongMaterial({ color: 0x111111 });
+            const wheels = [];
+            [{x:-0.65,z:0.7},{x:0.65,z:0.7},{x:-0.65,z:-0.7},{x:0.65,z:-0.7}].forEach(pos => {
+                const wheel = new THREE.Mesh(wheelGeo, wheelMat); wheel.position.set(pos.x, 0.3, pos.z); wheel.rotation.z = Math.PI/2;
+                group.add(wheel); wheels.push(wheel);
+            });
+            return { group, wheels, thrusters, body };
+        }
+
+        const player = createCar(carCatalog[activeCarIndex].color, true);
+        scene.add(player.group);
+
+        // --- SHOP LOGIC ---
+        function updateShopUI() {
+            const container = document.getElementById('shop-items');
+            document.getElementById('garage-credits').innerText = credits;
+            container.innerHTML = '';
+            carCatalog.forEach((car, index) => {
+                const isOwned = ownedCars.includes(index);
+                const isSelected = activeCarIndex === index;
+                const card = document.createElement('div');
+                card.className = `car-card ${isOwned ? 'owned' : ''} ${isSelected ? 'selected' : ''}`;
+                card.innerHTML = `
+                    <h3>${car.name}</h3>
+                    <p>Speed: x${car.speedMult}</p>
+                    <p>${isOwned ? (isSelected ? 'EQUIPPED' : 'OWNED') : 'Price: ' + car.price}</p>
+                    <button class="buy-btn" ${!isOwned && credits < car.price ? 'disabled' : ''}>
+                        ${isOwned ? (isSelected ? 'ACTIVE' : 'SELECT') : 'BUY'}
+                    </button>`;
+                card.querySelector('button').onclick = () => {
+                    if (!isOwned && credits >= car.price) {
+                        credits -= car.price; ownedCars.push(index); save();
+                    } else if (isOwned) {
+                        activeCarIndex = index; save();
+                    }
+                    updateShopUI(); updatePlayerCar();
+                };
+                container.appendChild(card);
+            });
+        }
+        function save() {
+            localStorage.setItem('lunar_credits', credits);
+            localStorage.setItem('lunar_owned', JSON.stringify(ownedCars));
+            localStorage.setItem('lunar_active', activeCarIndex);
+        }
+        function updatePlayerCar() {
+            player.body.material.color.setHex(carCatalog[activeCarIndex].color);
+        }
+
+        // --- GAMEPLAY VARIABLES ---
+        const enemies = [];
+        let gameActive = true;
+        let score = 0;
+        let currentSpeed = 0.05;
+        let nitroFuel = 100;
+        const keys = { left: false, right: false, up: false, down: false, space: false };
+
+        window.onkeydown = (e) => { if(keys.hasOwnProperty(e.key.replace("Arrow","").toLowerCase())) keys[e.key.replace("Arrow","").toLowerCase()] = true; if(e.key === " ") keys.space = true; };
+        window.onkeyup = (e) => { if(keys.hasOwnProperty(e.key.replace("Arrow","").toLowerCase())) keys[e.key.replace("Arrow","").toLowerCase()] = false; if(e.key === " ") keys.space = false; };
+
+        document.getElementById('open-garage-btn').onclick = () => { gameActive = false; document.getElementById('garage-overlay').style.display = 'block'; updateShopUI(); };
+        document.getElementById('close-garage-btn').onclick = () => { document.getElementById('garage-overlay').style.display = 'none'; gameActive = true; animate(); };
+        document.getElementById('restart-btn').onclick = () => { 
+            gameActive = true; score = 0; currentSpeed = 0.05; nitroFuel = 100;
+            player.group.position.set(0, 0, 0); enemies.forEach(e => scene.remove(e.group)); enemies.length = 0;
+            document.getElementById('game-over-screen').style.display = 'none'; animate();
+        };
+
+        camera.position.set(0, 4, 8);
+        camera.lookAt(0, 0, 0);
+
+        function animate() {
+            if (!gameActive) return;
+            requestAnimationFrame(animate);
+
+            const statMult = carCatalog[activeCarIndex].speedMult;
+
+            if (keys.left && player.group.position.x > -6.5) player.group.position.x -= 0.18;
+            if (keys.right && player.group.position.x < 6.5) player.group.position.x += 0.18;
+            
+            let isNitroActive = keys.space && nitroFuel > 0;
+            let maxSpeed = (isNitroActive ? 0.6 : 0.35) * statMult;
+
+            if (keys.up || isNitroActive) currentSpeed = Math.min(currentSpeed + 0.005, maxSpeed);
+            else if (keys.down) currentSpeed = Math.max(currentSpeed - 0.004, 0.02);
+            else currentSpeed = Math.max(currentSpeed - 0.001, 0.05);
+
+            if (isNitroActive) {
+                nitroFuel -= 0.7; camera.fov = Math.min(camera.fov + 0.5, 90);
+                player.thrusters.forEach(t => { t.material.opacity = 0.8; t.scale.y = 1 + Math.random(); });
+            } else {
+                nitroFuel = Math.min(nitroFuel + 0.15, 100); camera.fov = Math.max(camera.fov - 0.5, 75);
+                player.thrusters.forEach(t => t.material.opacity = 0);
+            }
+            camera.updateProjectionMatrix();
+            document.getElementById('nitro-bar-fill').style.width = nitroFuel + "%";
+
+            // Planet Parallax
+            [planet1, planet2].forEach(p => { p.position.z += currentSpeed * 0.98; if(p.position.z > 20) p.position.z = -150; p.rotation.y += 0.002; });
+
+            player.wheels.forEach(w => w.rotation.x += currentSpeed * 3);
+            let multiplier = player.group.position.x > 0.5 ? 2 : 1;
+            document.getElementById('multiplier').style.display = (multiplier === 2) ? 'inline' : 'none';
+
+            score += Math.floor(currentSpeed * 20 * multiplier);
+            credits += Math.floor(currentSpeed * 2 * multiplier); // Earn Credits
+            document.getElementById('score').innerText = credits;
+            
+            document.getElementById('speed-val').innerText = Math.floor(currentSpeed * 1500);
+            document.getElementById('needle').style.transform = `translateX(-50%) rotate(${-120 + (currentSpeed / (0.6 * statMult)) * 240}deg)`;
+
+            roadTexture.offset.y += currentSpeed;
+            if (Math.random() < 0.015) {
+                const laneX = (Math.random() - 0.5) * 12;
+                const isOncoming = laneX > 0;
+                const enemy = createCar(isOncoming ? 0xff0055 : 0x00ff88);
+                enemy.group.position.set(laneX, 0, -80);
+                if (!isOncoming) enemy.group.rotation.y = Math.PI;
+                enemy.isOncoming = isOncoming; enemies.push(enemy); scene.add(enemy.group);
+            }
+            
+            for (let i = enemies.length - 1; i >= 0; i--) {
+                const enemy = enemies[i];
+                enemy.group.position.z += enemy.isOncoming ? (currentSpeed + 0.25) : (currentSpeed - 0.02);
+                const dist = player.group.position.distanceTo(enemy.group.position);
+                if (dist < 1.6) {
+                    gameActive = false; save();
+                    document.getElementById('final-score').innerText = score;
+                    document.getElementById('game-over-screen').style.display = 'block';
+                }
+                if (enemy.group.position.z > 15) { scene.remove(enemy.group); enemies.splice(i, 1); }
+            }
+            renderer.render(scene, camera);
+        }
+        animate();
+        updatePlayerCar();
+        document.getElementById('score').innerText = credits;
+    </script>
+</body>
+</html>
+
